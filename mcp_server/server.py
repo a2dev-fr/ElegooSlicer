@@ -98,10 +98,63 @@ def build_tool_registry(engine: ProjectEngine) -> tuple[list[dict[str, Any]], di
     )
 
     register(
+        "gui_launch",
+        "Launch ElegooSlicer desktop GUI (empty or with an optional .3mf project) and wait for its main window.",
+        {
+            "project_path": {"type": "string", "description": "Optional .3mf path to open on launch; omit to launch ElegooSlicer empty."},
+            "wait_seconds": {"type": "number", "description": "Max seconds to wait for the main window (default 10)."},
+            "auto_confirm_preset_warning": {"type": "boolean", "description": "Auto-confirm 'Préréglage personnalisé' / 'Customized Preset' if it pops up on load (default true)."},
+            "dont_show_again": {"type": "boolean", "description": "Check 'Ne plus afficher' / persist suppression if a preset warning pops up."},
+        },
+        lambda a: engine.gui_launch(**a),
+    )
+
+    register(
         "gui_open_project",
         "Load/refresh the active (or given) .3mf project inside the live ElegooSlicer desktop GUI.",
-        {"project_path": {"type": "string"}},
+        {
+            "project_path": {"type": "string"},
+            "auto_confirm_preset_warning": {"type": "boolean", "description": "Auto-confirm 'Préréglage personnalisé' / 'Customized Preset' modal popups if shown (default true)."},
+            "dont_show_again": {"type": "boolean", "description": "Also check 'Ne plus afficher' and suppress future preset warnings."},
+        },
         lambda a: engine.open_in_gui(**a),
+    )
+
+    register(
+        "gui_list_windows",
+        "List all visible ElegooSlicer GUI windows, popups, modal dialogs (e.g. 'Préréglage personnalisé'), buttons, checkboxes, and texts.",
+        {
+            "include_invisible": {"type": "boolean"},
+            "include_children": {"type": "boolean", "description": "Enumerate child buttons/checkboxes/texts (default true)."},
+        },
+        lambda a: engine.gui_list_windows(**a),
+    )
+
+    register(
+        "gui_handle_dialog",
+        "Control a modal ElegooSlicer popup/dialog (e.g. click OK/Cancel on 'Préréglage personnalisé', check 'Ne plus afficher', or close).",
+        {
+            "hwnd": {"type": "integer", "description": "Optional dialog HWND from gui_list_windows (auto-selects active dialog if omitted)."},
+            "title_contains": {"type": "string", "description": "Optional substring match on dialog title or text (e.g. 'Préréglage')."},
+            "action": {"type": "string", "enum": ["click_button", "dismiss_preset_warning", "check_dont_show_again", "close"]},
+            "button": {"type": "string", "description": "Button label to click (default 'OK'; supports OK, Cancel/Annuler, Yes/Oui, No/Non, etc.)."},
+            "check_dont_show_again": {"type": "boolean", "description": "Check 'Ne plus afficher' / 'Don't show again' and persist setting in ElegooSlicer.conf."},
+            "persist_no_preset_warning": {"type": "boolean", "description": "Persist 'no_warn_when_modified_gcodes: true' in ElegooSlicer.conf."},
+        },
+        lambda a: engine.gui_handle_dialog(**a),
+    )
+
+    register(
+        "gui_control_window",
+        "Control any ElegooSlicer GUI window or dialog: focus, minimize, maximize, restore, close, or send a key (enter/escape/space/tab).",
+        {
+            "hwnd": {"type": "integer"},
+            "title_contains": {"type": "string"},
+            "action": {"type": "string", "enum": ["focus", "minimize", "maximize", "restore", "close", "send_key"]},
+            "key": {"type": "string", "description": "Key name when action='send_key' (enter, escape, space, tab, up, down, left, right)."},
+        },
+        lambda a: engine.gui_control_window(**a),
+        required=["action"],
     )
 
     register(
@@ -673,8 +726,22 @@ def build_tool_registry(engine: ProjectEngine) -> tuple[list[dict[str, Any]], di
     register(
         "gui_sync_to_live",
         "Push/load the active MCP `.3mf` project into the running ElegooSlicer GUI.",
-        {"project_path": {"type": "string"}},
+        {
+            "project_path": {"type": "string"},
+            "auto_confirm_preset_warning": {"type": "boolean", "description": "Auto-confirm 'Préréglage personnalisé' / 'Customized Preset' if shown (default true)."},
+            "dont_show_again": {"type": "boolean", "description": "Check 'Ne plus afficher' and persist warning suppression."},
+        },
         lambda a: engine.gui_sync_to_live(**a),
+    )
+
+    register(
+        "gui_app_config",
+        "Read or update ElegooSlicer.conf `app` flags (e.g. `no_warn_when_modified_gcodes`) while preserving ElegooSlicer's MD5 checksum.",
+        {
+            "keys": {"type": "array", "items": {"type": "string"}, "description": "Optional app config keys to read."},
+            "updates": {"type": "object", "description": "Optional key/value updates under `app` in ElegooSlicer.conf."},
+        },
+        lambda a: engine.gui_app_config(**a),
     )
 
     # ---- Persistent User Presets (2.5) ----

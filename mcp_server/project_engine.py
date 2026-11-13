@@ -17,7 +17,16 @@ from typing import Any
 import numpy as np
 
 from .config_registry import ConfigRegistry
-from .gui_bridge import find_elegoo_slicer_executable, send_project_to_running_gui
+from .gui_bridge import (
+    control_elegoo_window,
+    find_elegoo_slicer_executable,
+    get_elegoo_app_config,
+    handle_elegoo_dialog,
+    launch_elegoo_gui,
+    list_elegoo_windows,
+    send_project_to_running_gui,
+    set_elegoo_app_config,
+)
 from .ipc_client import ElegooIPCClient, IPCError
 from .mesh_engine import (
     TriangleMeshData,
@@ -909,9 +918,91 @@ class ProjectEngine:
             "objects": self._summarize_objects(state),
         }
 
-    def open_in_gui(self, project_path: str | None = None) -> dict[str, Any]:
+    def open_in_gui(
+        self,
+        project_path: str | None = None,
+        auto_confirm_preset_warning: bool = True,
+        dont_show_again: bool = False,
+    ) -> dict[str, Any]:
         target = self.resolve_project_path(project_path, must_exist=True)
-        return send_project_to_running_gui(target)
+        return send_project_to_running_gui(
+            target,
+            auto_confirm_preset_warning=auto_confirm_preset_warning,
+            dont_show_again=dont_show_again,
+        )
+
+    def gui_launch(
+        self,
+        project_path: str | None = None,
+        wait_seconds: float = 10.0,
+        auto_confirm_preset_warning: bool = True,
+        dont_show_again: bool = False,
+    ) -> dict[str, Any]:
+        """Launch ElegooSlicer desktop GUI (with optional project) and wait for its main window."""
+        resolved: Path | None = None
+        if project_path is not None:
+            resolved = self.resolve_project_path(project_path, must_exist=True)
+        return launch_elegoo_gui(
+            project_path=resolved,
+            wait_seconds=wait_seconds,
+            auto_confirm_preset_warning=auto_confirm_preset_warning,
+            dont_show_again=dont_show_again,
+        )
+
+    def gui_list_windows(
+        self,
+        include_invisible: bool = False,
+        include_children: bool = True,
+    ) -> dict[str, Any]:
+        """List running ElegooSlicer windows, popups, modal dialogs, and child controls."""
+        return list_elegoo_windows(
+            include_invisible=include_invisible,
+            include_children=include_children,
+        )
+
+    def gui_handle_dialog(
+        self,
+        hwnd: int | None = None,
+        title_contains: str | None = None,
+        action: str = "click_button",
+        button: str = "OK",
+        check_dont_show_again: bool = False,
+        persist_no_preset_warning: bool = False,
+    ) -> dict[str, Any]:
+        """Interact with a modal ElegooSlicer dialog (e.g. click OK/Cancel, check Don't show again)."""
+        return handle_elegoo_dialog(
+            hwnd=hwnd,
+            title_contains=title_contains,
+            action=action,
+            button=button,
+            check_dont_show_again=check_dont_show_again,
+            persist_no_preset_warning=persist_no_preset_warning,
+        )
+
+    def gui_control_window(
+        self,
+        action: str,
+        hwnd: int | None = None,
+        title_contains: str | None = None,
+        key: str | None = None,
+    ) -> dict[str, Any]:
+        """Focus, minimize, maximize, restore, close, or send keys to an ElegooSlicer window."""
+        return control_elegoo_window(
+            hwnd=hwnd,
+            action=action,
+            title_contains=title_contains,
+            key=key,
+        )
+
+    def gui_app_config(
+        self,
+        keys: list[str] | None = None,
+        updates: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Read or update ElegooSlicer.conf `app` settings (e.g. `no_warn_when_modified_gcodes`)."""
+        if updates:
+            return set_elegoo_app_config(updates)
+        return get_elegoo_app_config(keys=keys)
 
     # ---- Object management ----
 
@@ -2289,13 +2380,32 @@ class ProjectEngine:
             self._write_3mf_bundle(target, state)
         return {"ok": True, "live_state": live_state, "live_config_count": len(live_cfg.get("values") or {})}
 
-    def gui_sync_to_live(self, project_path: str | None = None) -> dict[str, Any]:
+    def gui_sync_to_live(
+        self,
+        project_path: str | None = None,
+        auto_confirm_preset_warning: bool = True,
+        dont_show_again: bool = False,
+    ) -> dict[str, Any]:
         """Push active project changes to live ElegooSlicer GUI (via SlicerIPC or WM_COPYDATA)."""
         target = self.resolve_project_path(project_path, must_exist=True)
         if self.ipc.supports_slicer_namespace():
             res = self.ipc.call("slicer.openProject", {"path": str(target)})
-            return {"mode": "native_live_ipc", "result": res, "project_path": str(target)}
-        gui_res = send_project_to_running_gui(target)
+            dialogs = []
+            if auto_confirm_preset_warning:
+                from .gui_bridge import dismiss_preset_dialogs
+
+                dialogs = dismiss_preset_dialogs(dont_show_again=dont_show_again, timeout_seconds=1.5)
+            return {
+                "mode": "native_live_ipc",
+                "result": res,
+                "project_path": str(target),
+                "dialogs_handled": dialogs,
+            }
+        gui_res = send_project_to_running_gui(
+            target,
+            auto_confirm_preset_warning=auto_confirm_preset_warning,
+            dont_show_again=dont_show_again,
+        )
         return {"mode": gui_res["method"], "result": gui_res, "project_path": str(target)}
 
     # ---- 2.5 Persistent User Profiles ----

@@ -620,6 +620,157 @@ class TestElegooSlicerMCP(unittest.TestCase):
             fl_params = [p for m, p in calls if m == "printer.getFileList"][0]
             self.assertEqual(fl_params, {"printerId": "p2", "pageNumber": 1, "pageSize": 50})
 
+    def test_gui_dialog_classification_app_config_and_tools(self) -> None:
+        import hashlib
+        from mcp_server.gui_bridge import (
+            _classify_dialog_kind,
+            _match_dialog_button,
+            get_elegoo_app_config,
+            handle_elegoo_dialog,
+            set_elegoo_app_config,
+        )
+
+        # Tool registration check
+        tools_list = self.server.handle_jsonrpc({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+        tool_names = {t["name"] for t in tools_list["result"]["tools"]}
+        for expected in (
+            "gui_launch",
+            "gui_open_project",
+            "gui_list_windows",
+            "gui_handle_dialog",
+            "gui_control_window",
+            "gui_app_config",
+        ):
+            self.assertIn(expected, tool_names)
+
+        # ElegooSlicer.conf read/write preserves exact MD5 checksum footer
+        conf_path = self.tmp_dir / "ElegooSlicer.conf"
+        set_elegoo_app_config({"no_warn_when_modified_gcodes": True}, conf_path=conf_path)
+        read_back = get_elegoo_app_config(keys=["no_warn_when_modified_gcodes"], conf_path=conf_path)
+        self.assertTrue(read_back["exists"])
+        self.assertTrue(read_back["app"]["no_warn_when_modified_gcodes"])
+        raw = conf_path.read_bytes()
+        marker = b"# MD5 checksum "
+        idx = raw.rfind(marker)
+        self.assertGreater(idx, 0)
+        body_lf = raw[:idx].replace(b"\r\n", b"\n").rstrip(b"\n")
+        expected_md5 = hashlib.md5(body_lf).hexdigest().upper()
+        self.assertEqual(raw[idx + len(marker) :].decode("utf-8").strip(), expected_md5)
+
+        # Dialog classification & button matching (French & English)
+        self.assertEqual(
+            _classify_dialog_kind(
+                "Préréglage personnalisé",
+                ["Le 3MF contient les préréglages..."],
+                [{"hwnd": 11, "text": "OK"}],
+            ),
+            "preset_warning",
+        )
+        self.assertEqual(_classify_dialog_kind("Chargement...", [], []), "progress")
+        matched = _match_dialog_button(
+            [{"hwnd": 10, "text": "Annuler"}, {"hwnd": 11, "text": "OK"}],
+            "ok",
+        )
+        self.assertIsNotNone(matched)
+        self.assertEqual(matched["hwnd"], 11)
+        matched_cancel = _match_dialog_button(
+            [{"hwnd": 10, "text": "Annuler"}, {"hwnd": 11, "text": "OK"}],
+            "cancel",
+        )
+        self.assertIsNotNone(matched_cancel)
+        self.assertEqual(matched_cancel["hwnd"], 10)
+
+        # Dialog selection prefers preset_warning over background progress dialog
+        fake_windows = {
+            "platform": "nt",
+            "running": True,
+            "pids": [9999],
+            "main_hwnd": 100,
+            "windows": [
+                {
+                    "hwnd": 100,
+                    "pid": 9999,
+                    "owner_hwnd": 0,
+                    "title": "ElegooSlicer",
+                    "class_name": "wxWindowNR",
+                    "visible": True,
+                    "enabled": True,
+                    "minimized": False,
+                    "maximized": False,
+                    "foreground": False,
+                    "is_main_window": True,
+                    "is_dialog": False,
+                    "dialog_kind": None,
+                    "rect": {"x": 0, "y": 0, "width": 1200, "height": 800},
+                    "buttons": [],
+                    "checkboxes": [],
+                    "texts": [],
+                },
+                {
+                    "hwnd": 200,
+                    "pid": 9999,
+                    "owner_hwnd": 100,
+                    "title": "Chargement...",
+                    "class_name": "wxWindowNR",
+                    "visible": True,
+                    "enabled": True,
+                    "minimized": False,
+                    "maximized": False,
+                    "foreground": False,
+                    "is_main_window": False,
+                    "is_dialog": True,
+                    "dialog_kind": "progress",
+                    "rect": {"x": 300, "y": 200, "width": 300, "height": 100},
+                    "buttons": [],
+                    "checkboxes": [],
+                    "texts": [],
+                },
+                {
+                    "hwnd": 300,
+                    "pid": 9999,
+                    "owner_hwnd": 100,
+                    "title": "Préréglage personnalisé",
+                    "class_name": "wxWindowNR",
+                    "visible": True,
+                    "enabled": True,
+                    "minimized": False,
+                    "maximized": False,
+                    "foreground": True,
+                    "is_main_window": False,
+                    "is_dialog": True,
+                    "dialog_kind": "preset_warning",
+                    "rect": {"x": 200, "y": 220, "width": 500, "height": 220},
+                    "buttons": [{"hwnd": 301, "class_name": "wxWindowNR", "text": "OK", "enabled": True}],
+                    "checkboxes": [
+                        {
+                            "hwnd": 302,
+                            "class_name": "Static",
+                            "role": "text",
+                            "text": "Ne plus afficher",
+                            "is_dont_show_again": True,
+                        }
+                    ],
+                    "texts": ["Le 3MF contient les préréglages..."],
+                },
+            ],
+        }
+        fake_windows["dialogs"] = [w for w in fake_windows["windows"] if w["is_dialog"]]
+        clicked: list[int] = []
+        if os.name == "nt":
+            with (
+                mock.patch("mcp_server.gui_bridge.list_elegoo_windows", return_value=fake_windows),
+                mock.patch("mcp_server.gui_bridge._click_hwnd_nt", side_effect=lambda _u, h: clicked.append(h)),
+                mock.patch("mcp_server.gui_bridge.set_elegoo_app_config", return_value={"updated": {"no_warn_when_modified_gcodes": True}}),
+                mock.patch("ctypes.windll.user32.IsWindow", return_value=0),
+                mock.patch("ctypes.windll.user32.IsWindowVisible", return_value=0),
+            ):
+                res = handle_elegoo_dialog(check_dont_show_again=True, button="OK")
+                self.assertEqual(res["hwnd"], 300)
+                self.assertTrue(res["dont_show_again_toggled"])
+                self.assertEqual(res["button"]["hwnd"], 301)
+                self.assertTrue(res["closed"])
+                self.assertEqual(clicked, [302, 301])
+
 
 if __name__ == "__main__":
     unittest.main()

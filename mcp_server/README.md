@@ -7,7 +7,8 @@ Serveur **Model Context Protocol (MCP)** complet permettant à un assistant IA (
 1. **Projets, Multi-plateaux & Interface Graphique**
    - `project_new`, `project_open`, `project_save`, `project_info`
    - `plate_list`, `plate_create`, `plate_delete`, `plate_move_object`, `plate_set_settings`
-   - `gui_open_project` (envoie le projet `.3mf` directement dans l'instance ElegooSlicer ouverte via `WM_COPYDATA`)
+   - `gui_launch`, `gui_open_project` (lance ElegooSlicer ou charge le `.3mf` via `WM_COPYDATA` et gère automatiquement les popups `Préréglage personnalisé` / `Customized Preset`)
+   - `gui_list_windows`, `gui_handle_dialog`, `gui_control_window`, `gui_app_config` (contrôle direct des fenêtres et boîtes de dialogue modales : focus/min/max/fermer/touches, clics boutons `OK`/`Annuler`/`Ne plus afficher`, réglage persistant `no_warn_when_modified_gcodes`)
    - `gui_sync_status`, `gui_sync_from_live`, `gui_sync_to_live` (synchronisation bidirectionnelle avec l'instance ElegooSlicer en cours)
    - `gui_live_ipc_call` (appel direct sur le serveur IPC TCP d'ElegooSlicer : `printer.*`, `user.*`, et `slicer.*` sur une build issue de cette branche)
 2. **Aperçus visuels PNG (MCP ImageContent)**
