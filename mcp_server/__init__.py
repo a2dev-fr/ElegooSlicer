@@ -1,0 +1,3 @@
+"""Model Context Protocol (MCP) server for ElegooSlicer."""
+
+__version__ = "1.0.0"

@@ -1,5 +1,6 @@
 #include "IPCServer.hpp"
 #include "IPCCommon.hpp"
+#include "SlicerIPC.hpp"
 #include "PrinterManager.hpp"
 #include "PrinterUploadManager.hpp"
 #include "TelemetryReporter.hpp"
@@ -759,6 +760,8 @@ IPCResponse IPCServer::handleRequest(const IPCRequest& request)
                 response.code    = static_cast<int>(PrinterNetworkErrorCode::OPERATION_NOT_IMPLEMENTED);
                 response.message = "unknown method: " + request.method;
             }
+        } else if (namesp == "slicer") {
+            response = Slic3r::SlicerIPC::handleRequest(request);
         } else {
             response.code    = static_cast<int>(PrinterNetworkErrorCode::OPERATION_NOT_IMPLEMENTED);
             response.message = "unknown namespace: " + namesp;

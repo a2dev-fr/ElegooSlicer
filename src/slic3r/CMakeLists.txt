@@ -747,6 +747,8 @@ set(SLIC3R_GUI_SOURCES
     Utils/Elegoo/IPCCommon.hpp
     Utils/Elegoo/IPCServer.cpp
     Utils/Elegoo/IPCServer.hpp
+    Utils/Elegoo/SlicerIPC.hpp
+    GUI/Elegoo/SlicerIPC.cpp
     Utils/Elegoo/IPCClient.cpp
     Utils/Elegoo/IPCClient.hpp
     Utils/Elegoo/UserNetworkManager.cpp

@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "elegoo-slicer": {
+      "command": "C:\\Users\\Alex\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+      "args": [
+        "-m",
+        "mcp_server"
+      ],
+      "cwd": "c:\\code\\ElegooSlicer"
+    }
+  }
+}

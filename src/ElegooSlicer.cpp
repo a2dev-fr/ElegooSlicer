@@ -29,11 +29,11 @@
 #include <condition_variable>
 #include <mutex>
 #include <boost/thread.hpp>
+#endif
 //add json logic
 #include "nlohmann/json.hpp"
 
 using namespace nlohmann;
-#endif
 
 #include <boost/algorithm/string/predicate.hpp>
 #include <boost/filesystem.hpp>
@@ -412,7 +412,10 @@ static PrinterTechnology get_printer_technology(const DynamicConfig &config)
 
 void record_exit_reson(std::string outputdir, int code, int plate_id, std::string error_message, sliced_info_t& sliced_info, std::map<std::string, std::string> key_values = std::map<std::string, std::string>())
 {
-#if defined(__linux__) || defined(__LINUX__)
+#if !defined(__linux__) && !defined(__LINUX__)
+    if (outputdir.empty())
+        return;
+#endif
     std::string result_file;
 
     if (!outputdir.empty())
@@ -456,7 +459,6 @@ void record_exit_reson(std::string outputdir, int code, int plate_id, std::strin
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ":" <<__LINE__ << boost::format(", saved config to %1%\n")%result_file;
     }
     catch (...) {}
-#endif
 }
 
 static int decode_png_to_thumbnail(std::string png_file, ThumbnailData& thumbnail_data)
