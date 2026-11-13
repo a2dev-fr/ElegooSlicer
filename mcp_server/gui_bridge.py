@@ -44,10 +44,12 @@ def find_elegoo_slicer_executable() -> Path:
 
 
 def _cstyle_escape_args(args: list[str]) -> str:
-    """Match Slic3r::escape_strings_cstyle used by SingleInstance::OtherInstanceMessage."""
+    """Match Slic3r::escape_strings_cstyle (semicolon-delimited) used by InstanceCheck."""
     escaped: list[str] = []
     for item in args:
-        needs_quotes = any(ch in item for ch in (' ', '\t', '"', '\\', '\n', '\r')) or item == ""
+        needs_quotes = any(ch in item for ch in (' ', '\t', '"', '\\', '\n', '\r', ';')) or (
+            len(args) == 1 and item == ""
+        )
         out = []
         for ch in item:
             if ch == '\\':
@@ -64,7 +66,7 @@ def _cstyle_escape_args(args: list[str]) -> str:
                 out.append(ch)
         s = "".join(out)
         escaped.append(f'"{s}"' if needs_quotes else s)
-    return " ".join(escaped)
+    return ";".join(escaped)
 
 
 def send_project_to_running_gui(project_path: Path, exe_path: Path | None = None) -> dict[str, Any]:
@@ -96,10 +98,10 @@ def send_project_to_running_gui(project_path: Path, exe_path: Path | None = None
         buf = ctypes.create_unicode_buffer(128)
         user32.GetClassNameW(hwnd, buf, 128)
         if buf.value == "wxWindowNR":
-            # SingleInstance sets Instance_Hash_Minor / Instance_Hash_Major on main wx frame
+            # InstanceCheck.cpp checks both Instance_Hash_Minor and Instance_Hash_Major != nullptr
             has_minor = user32.GetPropW(hwnd, "Instance_Hash_Minor")
             has_major = user32.GetPropW(hwnd, "Instance_Hash_Major")
-            if has_minor or has_major:
+            if has_minor and has_major:
                 matched_hwnds.append(hwnd)
         return True
 
@@ -119,19 +121,25 @@ def send_project_to_running_gui(project_path: Path, exe_path: Path | None = None
         if pid.value:
             user32.AllowSetForegroundWindow(pid.value)
 
-        res = user32.SendMessageW(
+        SMTO_ABORTIFHUNG = 0x0002
+        result_dword = ctypes.c_size_t(0)
+        ok = user32.SendMessageTimeoutW(
             matched_hwnds[0],
             0x004A,  # WM_COPYDATA
             0,
             ctypes.byref(cds),
+            SMTO_ABORTIFHUNG,
+            5000,
+            ctypes.byref(result_dword),
         )
-        return {
-            "method": "WM_COPYDATA",
-            "hwnd": matched_hwnds[0],
-            "pid": int(pid.value),
-            "result": int(res),
-            "project": resolved_project,
-        }
+        if ok:
+            return {
+                "method": "WM_COPYDATA",
+                "hwnd": matched_hwnds[0],
+                "pid": int(pid.value),
+                "result": int(result_dword.value),
+                "project": resolved_project,
+            }
 
     # Fallback: launch ElegooSlicer GUI with the project path
     DETACHED_PROCESS = 0x00000008

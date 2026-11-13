@@ -570,6 +570,56 @@ class TestElegooSlicerMCP(unittest.TestCase):
             http_srv.server_close()
             thread.join(timeout=3)
 
+    def test_gui_cstyle_escape_and_ipc_safety(self) -> None:
+        from mcp_server.gui_bridge import _cstyle_escape_args
+        from mcp_server.ipc_client import IPCEndpoint
+
+        # Exact match for Slic3r::escape_strings_cstyle / unescape_strings_cstyle (semicolon delimiter)
+        escaped = _cstyle_escape_args([
+            r"C:\Program Files\ElegooSlicer\elegoo-slicer.exe",
+            r"C:\Users\Alex\OneDrive - a2-dev.fr\STL\10_Patins_TPU.3mf",
+        ])
+        self.assertEqual(
+            escaped,
+            r'"C:\\Program Files\\ElegooSlicer\\elegoo-slicer.exe";"C:\\Users\\Alex\\OneDrive - a2-dev.fr\\STL\\10_Patins_TPU.3mf"',
+        )
+        # Single empty string must be quoted; items with ';' must be quoted too
+        self.assertEqual(_cstyle_escape_args([""]), '""')
+        self.assertEqual(_cstyle_escape_args(["plain.exe", "a;b.3mf"]), 'plain.exe;"a;b.3mf"')
+
+        # IPC safety: supports_slicer_namespace caches per endpoint; get_file_list sends pagination; get_selected_printer picks online printer without null call
+        client = ElegooIPCClient()
+        ep = IPCEndpoint(port=12345, auth_token="tok", port_file=self.tmp_dir / "ipc_port.txt")
+        calls: list[tuple[str, dict]] = []
+
+        def fake_call(method: str, params: dict | None = None, timeout: float | None = None):
+            calls.append((method, params or {}))
+            if method == "printer.getPrinterList":
+                return [
+                    {"printerId": "p1", "connectStatus": 0},
+                    {"printerId": "p2", "connectStatus": 1},
+                ]
+            if method == "printer.getFileList":
+                return {"list": []}
+            if method == "slicer.ping":
+                from mcp_server.ipc_client import IPCError
+                raise IPCError("unknown namespace", code=-1)
+            return {}
+
+        with mock.patch("mcp_server.ipc_client.discover_ipc_endpoint", return_value=ep), mock.patch.object(
+            client, "call", side_effect=fake_call
+        ):
+            self.assertFalse(client.supports_slicer_namespace())
+            self.assertFalse(client.supports_slicer_namespace())
+            self.assertEqual(sum(1 for m, _ in calls if m == "slicer.ping"), 1)
+
+            self.assertEqual(client.get_selected_printer(), "p2")
+            self.assertFalse(any(m == "printer.getSelectedPrinter" for m, _ in calls))
+
+            client.get_file_list("p2")
+            fl_params = [p for m, p in calls if m == "printer.getFileList"][0]
+            self.assertEqual(fl_params, {"printerId": "p2", "pageNumber": 1, "pageSize": 50})
+
 
 if __name__ == "__main__":
     unittest.main()

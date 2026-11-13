@@ -66,13 +66,13 @@ class ElegooIPCClient:
     def __init__(self, port_file: Path | None = None, timeout: float = 10.0) -> None:
         self.port_file = port_file
         self.timeout = timeout
+        self._slicer_ns_cache: dict[tuple[int, str], bool] = {}
 
     def is_available(self) -> bool:
-        """Return True if `ipc_port.txt` exists and TCP port accepts connections."""
+        """Return True if `ipc_port.txt` exists and IPCServer answers `printer.getPrinterList`."""
         try:
-            endpoint = discover_ipc_endpoint(self.port_file)
-            with socket.create_connection(("127.0.0.1", endpoint.port), timeout=1.5):
-                return True
+            self.call("printer.getPrinterList", timeout=1.5)
+            return True
         except Exception:
             return False
 
@@ -102,6 +102,10 @@ class ElegooIPCClient:
                         # Server pushes async telemetry/RTM events on open connections.
                         continue
                     if msg_type == "response" or msg.get("id") == req_id:
+                        try:
+                            sock.shutdown(socket.SHUT_RDWR)
+                        except OSError:
+                            pass
                         code = msg.get("code", 0)
                         if code != 0:
                             raise IPCError(
@@ -118,12 +122,21 @@ class ElegooIPCClient:
         raise IPCError(f"Timed out waiting for response to {method}")
 
     def supports_slicer_namespace(self) -> bool:
-        """Return True when the running ElegooSlicer binary implements `slicer.*`."""
+        """Return True when the running ElegooSlicer binary implements `slicer.*` (cached per endpoint)."""
+        try:
+            endpoint = discover_ipc_endpoint(self.port_file)
+        except Exception:
+            return False
+        cache_key = (endpoint.port, endpoint.auth_token)
+        if cache_key in self._slicer_ns_cache:
+            return self._slicer_ns_cache[cache_key]
         try:
             res = self.call("slicer.ping", {}, timeout=2.0)
-            return isinstance(res, dict) and bool(res.get("ok"))
+            supported = isinstance(res, dict) and bool(res.get("ok"))
         except IPCError:
-            return False
+            supported = False
+        self._slicer_ns_cache[cache_key] = supported
+        return supported
 
     @staticmethod
     def _recv_exact(sock: socket.socket, size: int) -> bytes:
@@ -154,16 +167,29 @@ class ElegooIPCClient:
             return data
         return data.get("printers", []) if isinstance(data, dict) else []
 
-    def get_selected_printer(self) -> str:
+    def get_selected_printer(self, printer_model: str = "", printer_id: str = "") -> str:
+        """Return selected printerId (or online/first printer without triggering IPC null-param errors)."""
+        if printer_model or printer_id:
+            try:
+                res = self.call(
+                    "printer.getSelectedPrinter",
+                    {"printerModel": printer_model, "printerId": printer_id},
+                )
+                if isinstance(res, str):
+                    return res
+                if isinstance(res, dict) and res.get("printerId"):
+                    return str(res.get("printerId", ""))
+            except IPCError:
+                pass
         try:
-            res = self.call("printer.getSelectedPrinter")
+            printers = self.get_printer_list()
         except IPCError:
             return ""
-        if isinstance(res, str):
-            return res
-        if isinstance(res, dict):
-            return str(res.get("printerId", ""))
-        return ""
+        if not printers:
+            return ""
+        online = [p for p in printers if p.get("connectStatus") == 1]
+        chosen = online[0] if online else printers[0]
+        return str(chosen.get("printerId", ""))
 
     def get_printer_network_info(self, printer_id: str) -> dict[str, Any]:
         return self.call("printer.getPrinterNetworkInfo", {"printerId": printer_id}) or {}
@@ -177,8 +203,11 @@ class ElegooIPCClient:
     def get_printer_mms_info(self, printer_id: str) -> dict[str, Any]:
         return self.call("printer.getPrinterMmsInfo", {"printerId": printer_id}) or {}
 
-    def get_file_list(self, printer_id: str) -> dict[str, Any]:
-        return self.call("printer.getFileList", {"printerId": printer_id}) or {}
+    def get_file_list(self, printer_id: str, page: int = 1, page_size: int = 50) -> dict[str, Any]:
+        return self.call(
+            "printer.getFileList",
+            {"printerId": printer_id, "pageNumber": page, "pageSize": page_size},
+        ) or {}
 
     def get_print_task_list(self, printer_id: str, page: int = 1, page_size: int = 20) -> dict[str, Any]:
         return self.call(
